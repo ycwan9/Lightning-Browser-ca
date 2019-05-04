@@ -30,3 +30,22 @@ script:
   - ./gradlew jacocoTestReport
 after_success:
   - bash <(curl -s https://codecov.io/bash)
+before_deploy:
+  - base64 -d keystore.b64 | openssl enc -aes-256-cbc -d -pass env:ANDROID_KEYSTORE_PASS -out android.jks
+  - ./gradlew build \
+      -Pandroid.injected.signing.store.file=android.jks \
+      -Pandroid.injected.signing.store.password=$STORE_PASSWORD \
+      -Pandroid.injected.signing.key.alias=android-key \
+      -Pandroid.injected.signing.key.password=$KEY_PASSWORD
+deploy:
+  file_glob: true
+  provider: releases
+  api_key: $GITHUB_OAUTH_TOKEN
+  file: app/build/outputs/apk/*/*/app-*.apk
+  skip_cleanup: true
+  - draft: true
+    on:
+      tags: false
+  - draft: false
+    on:
+      tags: true
