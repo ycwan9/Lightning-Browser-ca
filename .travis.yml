@@ -31,7 +31,7 @@ script:
 after_success:
   - bash <(curl -s https://codecov.io/bash)
 before_deploy:
-  - echo $ANDROID_KEYSTORE_PASS | gpg -d --passphrase-fd 0 -o keystore.jks keystore.jks.asc
+  - echo $ANDROID_KEYSTORE_PASS | gpg -d --passphrase-fd 0 -o app/keystore.jks keystore.jks.asc
   - >
     ./gradlew build
     -Pandroid.injected.signing.store.file=keystore.jks
