@@ -46,6 +46,7 @@ deploy:
     skip_cleanup: true
     draft: true
     on:
+      branch: dev
       tags: false
   - file_glob: true
     provider: releases
