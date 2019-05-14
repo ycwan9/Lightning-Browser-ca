@@ -61,11 +61,16 @@ class AppModule(private val browserApp: BrowserApp, private val buildInfo: Build
 
     @Provides
     @UserPrefs
-    fun provideDebugPreferences(): SharedPreferences = browserApp.getSharedPreferences("settings", 0)
+    fun provideUserPreferences(): SharedPreferences = browserApp.getSharedPreferences("settings", 0)
 
     @Provides
     @DevPrefs
-    fun provideUserPreferences(): SharedPreferences = browserApp.getSharedPreferences("developer_settings", 0)
+    fun provideDebugPreferences(): SharedPreferences = browserApp.getSharedPreferences("developer_settings", 0)
+
+    @Provides
+    @AdBlockPrefs
+    fun provideAdBlockPreferences(): SharedPreferences = browserApp.getSharedPreferences("ad_block_settings", 0)
+
 
     @Provides
     fun providesAssetManager(): AssetManager = browserApp.assets
@@ -131,6 +136,7 @@ class AppModule(private val browserApp: BrowserApp, private val buildInfo: Build
 
     @Singleton
     @Provides
+    @SuggestionsClient
     fun providesSuggestionsHttpClient(): OkHttpClient {
         val intervalDay = TimeUnit.DAYS.toSeconds(1)
 
@@ -142,6 +148,27 @@ class AppModule(private val browserApp: BrowserApp, private val buildInfo: Build
         }
 
         val suggestionsCache = File(browserApp.cacheDir, "suggestion_responses")
+
+        return OkHttpClient.Builder()
+            .cache(Cache(suggestionsCache, FileUtils.megabytesToBytes(1)))
+            .addNetworkInterceptor(rewriteCacheControlInterceptor)
+            .build()
+    }
+
+    @Singleton
+    @Provides
+    @GeneralClient
+    fun providesGeneralHttpClient(): OkHttpClient {
+        val intervalDay = TimeUnit.DAYS.toSeconds(1)
+
+        val rewriteCacheControlInterceptor = Interceptor { chain ->
+            val originalResponse = chain.proceed(chain.request())
+            originalResponse.newBuilder()
+                .header("cache-control", "max-age=$intervalDay, max-stale=$intervalDay")
+                .build()
+        }
+
+        val suggestionsCache = File(browserApp.cacheDir, "okhttp")
 
         return OkHttpClient.Builder()
             .cache(Cache(suggestionsCache, FileUtils.megabytesToBytes(1)))
@@ -174,11 +201,23 @@ class AppModule(private val browserApp: BrowserApp, private val buildInfo: Build
 
 @Qualifier
 @Retention(AnnotationRetention.SOURCE)
+annotation class SuggestionsClient
+
+@Qualifier
+@Retention(AnnotationRetention.SOURCE)
+annotation class GeneralClient
+
+@Qualifier
+@Retention(AnnotationRetention.SOURCE)
 annotation class MainHandler
 
 @Qualifier
 @Retention(AnnotationRetention.SOURCE)
 annotation class UserPrefs
+
+@Qualifier
+@Retention(AnnotationRetention.SOURCE)
+annotation class AdBlockPrefs
 
 @Qualifier
 @Retention(AnnotationRetention.SOURCE)

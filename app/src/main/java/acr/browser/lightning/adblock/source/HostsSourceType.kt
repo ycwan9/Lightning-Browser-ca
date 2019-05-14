@@ -4,6 +4,7 @@ import acr.browser.lightning.preference.UserPreferences
 import okhttp3.HttpUrl
 import java.io.File
 
+
 /**
  * The source from which hosts should be loaded.
  */

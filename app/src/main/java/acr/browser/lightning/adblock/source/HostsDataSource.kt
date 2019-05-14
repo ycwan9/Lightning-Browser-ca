@@ -8,8 +8,18 @@ import io.reactivex.Single
 interface HostsDataSource {
 
     /**
-     * Load the hosts and emit them as a [Single] [List].
+     * Load the hosts and emit them as a [Single] [HostsResult].
      */
-    fun loadHosts(): Single<List<String>>
+    fun loadHosts(): Single<HostsResult>
+
+    /**
+     * The unique [String] identifier for this source.
+     */
+    fun identifier(): String
+
+    /**
+     * @return `true` if the source is stale, `false` otherwise.
+     */
+    fun requiresRefresh(): Boolean
 
 }

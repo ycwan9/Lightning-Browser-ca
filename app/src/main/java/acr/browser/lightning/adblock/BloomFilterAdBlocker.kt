@@ -1,6 +1,8 @@
 package acr.browser.lightning.adblock
 
+import acr.browser.lightning.R
 import acr.browser.lightning.adblock.source.HostsDataSourceProvider
+import acr.browser.lightning.adblock.source.HostsResult
 import acr.browser.lightning.adblock.util.BloomFilter
 import acr.browser.lightning.adblock.util.DefaultBloomFilter
 import acr.browser.lightning.adblock.util.DelegatingBloomFilter
@@ -9,9 +11,12 @@ import acr.browser.lightning.adblock.util.`object`.ObjectStore
 import acr.browser.lightning.adblock.util.hash.MurmurHashStringAdapter
 import acr.browser.lightning.database.adblock.Host
 import acr.browser.lightning.database.adblock.HostsRepository
+import acr.browser.lightning.database.adblock.HostsRepositoryInfo
 import acr.browser.lightning.di.DatabaseScheduler
+import acr.browser.lightning.extensions.toast
 import acr.browser.lightning.log.Logger
 import android.app.Application
+import io.reactivex.Maybe
 import io.reactivex.Scheduler
 import io.reactivex.Single
 import java.net.URI
@@ -33,6 +38,7 @@ class BloomFilterAdBlocker @Inject constructor(
     private val logger: Logger,
     hostsDataSourceProvider: HostsDataSourceProvider,
     private val hostsRepository: HostsRepository,
+    private val hostsRepositoryInfo: HostsRepositoryInfo,
     application: Application,
     @DatabaseScheduler private val databaseScheduler: Scheduler
 ) : AdBlocker {
@@ -41,34 +47,55 @@ class BloomFilterAdBlocker @Inject constructor(
     private val objectStore: ObjectStore<DefaultBloomFilter<String>> = JvmObjectStore(application, MurmurHashStringAdapter())
 
     init {
-        Single.defer {
-            if (hostsRepository.hasHosts()) {
-                hostsRepository.allHosts()
-            } else {
-                hostsDataSourceProvider.createHostsDataSource()
-                    .loadHosts()
-                    .map { it.map(::Host) }
-                    .flatMap { hostsRepository.addHosts(it).andThen(Single.just(it)) }
-            }
-        }.flatMap(::loadBloomFilter)
-            .subscribeOn(databaseScheduler)
+        val hostsDataSource = hostsDataSourceProvider.createHostsDataSource()
+        loadStoredBloomFilter().filter {
+            // Force a new hosts request if the hosts are out of date or if the repo has no hosts.
+            hostsRepositoryInfo.identity == hostsDataSource.identifier()
+                && !hostsDataSource.requiresRefresh()
+                && hostsRepository.hasHosts()
+        }.switchIfEmpty(
+            hostsDataSourceProvider
+                .createHostsDataSource()
+                .loadHosts()
+                .flatMapMaybe {
+                    when (it) {
+                        is HostsResult.Success -> Maybe.just(it.hosts)
+                        is HostsResult.Failure ->
+                            Maybe.empty<List<String>>().doOnComplete {
+                                logger.log(TAG, "Unable to load hosts", it.cause)
+                            }
+                    }
+                }
+                .map { it.map(::Host) }
+                .flatMapSingleElement {
+                    // Clear out the old hosts and bloom filter now that we have the new hosts.
+                    hostsRepository.removeAllHosts()
+                        .andThen(hostsRepository.addHosts(it))
+                        .andThen(createAndSaveBloomFilter(it))
+                        .doOnSuccess {
+                            hostsRepositoryInfo.identity = hostsDataSource.identifier()
+                        }
+                }.switchIfEmpty(loadStoredBloomFilter())
+        ).filter {
+            // If we were unsuccessful in loading hosts and we don't have hosts in the repo, don't
+            // allow initialization, as false positives will result in bad browsing experience.
+            hostsRepository.hasHosts()
+        }.subscribeOn(databaseScheduler)
             .doOnSuccess {
                 bloomFilter.delegate = it
                 logger.log(TAG, "Finished loading bloom filter")
             }
+            .doOnComplete {
+                application.toast(R.string.bookmark_export_failure)
+            }
             .subscribe()
     }
 
-    /**
-     * Loads the [BloomFilter] from storage or creates a new one and stores it for fast future initialization.
-     */
-    private fun loadBloomFilter(hosts: List<Host>): Single<BloomFilter<String>> = Single.fromCallable {
-        val previouslyStored = objectStore.retrieve(BLOOM_FILTER_KEY)
+    private fun loadStoredBloomFilter(): Maybe<BloomFilter<String>> = Maybe.fromCallable {
+        objectStore.retrieve(BLOOM_FILTER_KEY)
+    }
 
-        if (previouslyStored != null) {
-            return@fromCallable previouslyStored
-        }
-
+    private fun createAndSaveBloomFilter(hosts: List<Host>): Single<BloomFilter<String>> = Single.fromCallable {
         logger.log(TAG, "Constructing bloom filter from list")
 
         val bloomFilter = DefaultBloomFilter(
@@ -81,7 +108,7 @@ class BloomFilterAdBlocker @Inject constructor(
         }
         objectStore.store(BLOOM_FILTER_KEY, bloomFilter)
 
-        return@fromCallable bloomFilter
+        bloomFilter
     }
 
     override fun isAd(url: String): Boolean {
