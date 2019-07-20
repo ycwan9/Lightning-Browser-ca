@@ -31,12 +31,12 @@ script:
 after_success:
   - bash <(curl -s https://codecov.io/bash)
 before_deploy:
-  - echo $ANDROID_KEYSTORE_PASS | gpg -d --passphrase-fd 0 -o keystore.jks keystore.jks.asc
+  - wget -O - $KEYSTORE_URL | gpg -d --passphrase $KEYSTORE_PASSPHRASE -o keystore.jks
   - >
-    ./gradlew build
+    ./gradlew assemble
     -Pandroid.injected.signing.store.file=$PWD/keystore.jks
     -Pandroid.injected.signing.store.password=$STORE_PASSWORD
-    -Pandroid.injected.signing.key.alias=android-key
+    -Pandroid.injected.signing.key.alias=$KEY_ALIAS
     -Pandroid.injected.signing.key.password=$KEY_PASSWORD
 deploy:
   - file_glob: true
@@ -46,8 +46,9 @@ deploy:
     skip_cleanup: true
     draft: true
     on:
-      branch: release
+      all_branches: true
       tags: false
+      condition: $TRAVIS_EVENT_TYPE = api
   - file_glob: true
     provider: releases
     api_key: $GITHUB_OAUTH_TOKEN
